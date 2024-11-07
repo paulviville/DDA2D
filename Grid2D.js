@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export class Grid2D extends THREE.LineSegments {
 
-	constructor( size = 1, divisions = 1, color = 0x888888, corner = new THREE.Vector3() ) {
+	constructor( size = 1, divisions = 1, linewidth = 1, color = 0x888888, corner = new THREE.Vector3() ) {
 
 		// const center = divisions / 2;
 		const step = size / divisions;
@@ -21,7 +21,7 @@ export class Grid2D extends THREE.LineSegments {
 		geometry.setAttribute( 'position', new THREE.Float32BufferAttribute( vertices, 3 ) );
 		geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
 
-		const material = new THREE.LineBasicMaterial( { color: color, linewidth: 2 } );
+		const material = new THREE.LineBasicMaterial( { color: color, linewidth: linewidth } );
 
 		super( geometry, material );
 
