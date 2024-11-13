@@ -133,7 +133,7 @@ const moves = new THREE.Vector3();
 
 /// debug 
 const LODS = [[], [], [], [], [], []]
-const LODSSPHERE = new THREE.SphereGeometry( 0.05, 10, 10 );
+const LODSSPHERE = new THREE.SphereGeometry( 0.025, 10, 10 );
 const LODSSPHEREMATERIALS = new THREE.MeshPhongMaterial( { color: 0xFFFFFF} );
 
 const LODSMESHES = []
@@ -189,7 +189,6 @@ function initiateMarch(ray) {
     1 / ray2.direction.z,
   );
 
-  
   timeSteps.set(
     1 / ray2.direction.x,
     1 / ray2.direction.y,
@@ -213,6 +212,11 @@ function initiateMarch(ray) {
   stepThroughCell(new THREE.Vector3(0, 0, 0), ray2, entryPoint, entry, exit, 0, new THREE.Vector3(), entry*4);
 
   /// debug
+  depths.forEach(d => {
+    LODS[2].push(ray.origin.clone().addScaledVector(ray.direction, d))
+
+  })
+
   showLods()
   inter0.position.copy(ray.origin.clone().addScaledVector(ray.direction, entry*4));
   inter1.position.copy(ray.origin.clone().addScaledVector(ray.direction, exit*4));
@@ -222,14 +226,12 @@ function initiateMarch(ray) {
 }
 
 function stepThroughCell(cell, ray, entryPoint, entryT, exitT, lod = 0, offset = new THREE.Vector3(), depth = 0) {  
-  if(lod >= 3)
+  if(lod >= maxLoD)
     return;
 
-  console.log(lod, entryT, cell)
-  console.log(depth)
-  depths.push(depth)
-  LODS[2].push(ray.origin.clone().multiplyScalar(4).addScaledVector(ray.direction, depth))
-
+  /// debug
+  // depths.push(depth)
+  ///
 
   /// rescaling time from [0,1]² -> [0,4]²
   const timeToExit = (exitT - entryT) * 4;
@@ -286,6 +288,8 @@ function stepThroughCell(cell, ray, entryPoint, entryT, exitT, lod = 0, offset =
 
 
   for(let j = 0; j < i; ++j) {
+    const newDepth = depth + hits[j] * resolutionLoD[lod];
+    if(newDepth < 5 / lod)
     stepThroughCell(
       voxelHits[j].clone(),
       ray,
@@ -294,7 +298,7 @@ function stepThroughCell(cell, ray, entryPoint, entryT, exitT, lod = 0, offset =
       hits[j+1],
       lod+1,
       cellOffset.clone(),
-      depth + hits[j] *resolutionLoD[lod]
+      newDepth,
     );
   }
 }
