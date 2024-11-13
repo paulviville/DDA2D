@@ -44,7 +44,6 @@ const point0 = new THREE.Vector3(-0.7, -0.1, 0);
 const point1 = new THREE.Vector3(3.75, 4.5, 0);
 
 const points = [point0, point1];
-let maxLength = point0.distanceTo(point1)
 
 const rayGeometry = new THREE.BufferGeometry().setFromPoints([point0, point1]);
 const rayMaterial = new THREE.LineBasicMaterial({
@@ -61,34 +60,24 @@ const ray = {
 }
 
 
-const maxLoD = 4;
-
-const LoDGrids = new Array(maxLoD);
+const maxLoD = 5;
 
 let gridCells = new THREE.Group();
 scene.add(gridCells);
 let color = 0x777799
 function showCell(cell, lod = 0, offset = new THREE.Vector3()) {
-  // console.log(cell, lod)
   const cellGrid = new Grid2D(
     4 / Math.pow(4, lod),
     4, 1, color, 
-    // cell.clone().add(offset));
     offset.multiplyScalar(4))
-    // if(lod == 2) console.log(offset)
-  // const cellGrid = new Grid2D(4 / Math.pow(4, lod), 4, 1, 0x777799, cell.clone().multiplyScalar(1 / Math.pow(4, lod - 1)).add(offset));
   gridCells.add(cellGrid)
 }
 
 
 function updateRay(pId, pos) {
-  console.log("updating ray")
   const children = gridCells.children.map(x => x)
   children.forEach(c => gridCells.remove(c));
   
-  console.log("updating ray", gridCells.children.length)
-  
-
   const index = pId * 3;
   rayPositions.array[index] = pos.x;
   rayPositions.array[index+1] = pos.y;
@@ -100,7 +89,6 @@ function updateRay(pId, pos) {
 
   ray.origin.copy(points[0])
   ray.direction.copy(points[1]).sub(points[0]).normalize();
-  maxLength = points[0].distanceTo(points[1])
 
 
 }
@@ -124,44 +112,6 @@ scene.add(...spheres);
 const backgroundPlane = new THREE.Mesh(new THREE.PlaneGeometry(100, 100));
 
 
-
-
-
-
-
-const dir2 = ray.direction.clone().multiply(ray.direction);
-
-// const stepVector2 = new THREE.Vector3(
-//   Math.min(Math.sqrt(1 + (dir2.y + dir2.z) / dir2.x), Number.MAX_VALUE),
-//   Math.min(Math.sqrt(1 + (dir2.x + dir2.z) / dir2.y), Number.MAX_VALUE),
-//   Math.min(Math.sqrt(1 + (dir2.y + dir2.x) / dir2.z), Number.MAX_VALUE),
-// );
-
-const stepVector = new THREE.Vector3();
-const signs = new THREE.Vector3();
-function setStepVector() 
-{
-  signs.set(
-    ray.direction.x >= 0 ? 1 : 0,
-    ray.direction.y >= 0 ? 1 : 0,
-    ray.direction.z >= 0 ? 1 : 0,
-  );
-  stepVector.set(
-    1 / ray.direction.x ?? Infinity,
-    1 / ray.direction.y ?? Infinity,
-    1 / ray.direction.z ?? Infinity,
-  );
-
-  stepVector.x *= signs.x ? 1 : -1;
-  stepVector.y *= signs.y ? 1 : -1;
-  stepVector.z *= signs.z ? 1 : -1;
-}
-setStepVector()
-
-// console.log(ray)
-// console.log(dir2)
-// console.log(stepVector)
-// console.log(stepVector2)
 const sphereGeometry2 = new THREE.SphereGeometry( 0.025, 16, 16 );
 const sphereMaterial2 = new THREE.MeshPhongMaterial( { color: 0x2244AA, wireframe: true } );
 
@@ -170,96 +120,193 @@ let inter1 = new THREE.Mesh(sphereGeometry2, sphereMaterial2)
 scene.add(inter0)
 scene.add(inter1)
 
-// const clamp = (val, min, max) => M
 
-// function computeEntryPoint04(ray) {
-//   const invDirection = (new THREE.Vector3(1,1,1)).divide(ray.direction);
-//   // const invDirection = 
+const epsilon = 0.00000001;
 
-//   const t0 = new THREE.Vector3(0, 0, 0);
-//   t0.sub(ray.origin).multiply(invDirection);
-//   const t1 = new THREE.Vector3(4, 4, 0);
-//   t1.sub(ray.origin).multiply(invDirection);
+const dirSigns = new THREE.Vector3()
+const Dir = new THREE.Vector3();
+const invDir = new THREE.Vector3();
+const timeSteps = new THREE.Vector3();
+const resolutionLoD = new Array(maxLoD);
+const scaleLoD = new Array(maxLoD);
+const moves = new THREE.Vector3();
 
-//   const tMin = new THREE.Vector3(
-//     Math.max(0, invDirection.x < 0 ? t1.x : t0.x), 
-//     Math.max(0, invDirection.y < 0 ? t1.y : t0.y), 
-//     Math.max(0, invDirection.z < 0 ? t1.z : t0.z) 
-//   );
+/// debug 
+const LODS = [[], [], [], [], [], []]
+const LODSSPHERE = new THREE.SphereGeometry( 0.05, 10, 10 );
+const LODSSPHEREMATERIALS = new THREE.MeshPhongMaterial( { color: 0xFFFFFF} );
 
-//   const tMax = new THREE.Vector3(
-//     Math.min(Number.MAX_VALUE, invDirection.x < 0 ? t0.x : t1.x), 
-//     Math.min(Number.MAX_VALUE, invDirection.y < 0 ? t0.y : t1.y), 
-//     Math.min(Number.MAX_VALUE, invDirection.z < 0 ? t0.z : t1.z) 
-//   );
+const LODSMESHES = []
+function showLods() {
+  LODSMESHES.forEach(mesh => {
+    scene.remove(mesh)
+    mesh.dispose()
+  });
+  LODSMESHES.length = 0;
 
+  for(let lod = 0; lod < maxLoD; ++lod) {
+    LODSMESHES[lod] = new THREE.InstancedMesh(LODSSPHERE, LODSSPHEREMATERIALS, Math.pow(10, lod+1));
+    scene.add(LODSMESHES[lod])
 
-//   const maxMin = Math.max(Math.max(tMin.x, tMin.y), 0);
-//   const maxMax = Math.min(Math.min(tMax.x, tMax.y), Number.MAX_VALUE);
+    const matrix = new THREE.Matrix4();
+    const scaleVector = (new THREE.Vector3(1, 1, 1)).multiplyScalar(1/(2*lod+1))
+    const rotation = new THREE.Quaternion()
+    for(let i = 0; i < LODS[lod].length; ++i) {
+      matrix.compose(LODS[lod][i], rotation, scaleVector)
+      LODSMESHES[lod].setMatrixAt(i, matrix);
+    }
 
-//   const entryPoint = ray.origin.clone().addScaledVector(ray.direction, maxMin)
-//   const exitPoint = ray.origin.clone().addScaledVector(ray.direction, maxMax)
-//   inter0.position.copy(entryPoint);
-//   inter1.position.copy(exitPoint);
-//   console.log(maxMin, maxMax)
-//   return {point: entryPoint, distance: maxMin}
-// }
+    LODS[lod].length = 0;
+  }
 
-// function computeEntryPoint(ray) {
-
-//   // console.log(stepVector)
-//   // console.log(ray.direction)
   
-//   // console.log(signs)
+}
+///
 
-//   const tTo0 = new THREE.Vector3(
-//     - ray.origin.x / (ray.direction.x != 0 ? ray.direction.x : Infinity),
-//     - ray.origin.y / (ray.direction.y != 0 ? ray.direction.y : Infinity),
-//     - ray.origin.z / (ray.direction.z != 0 ? ray.direction.z : Infinity),
-//   )
+const depths = []
 
-//   const tTo4 = new THREE.Vector3(
-//     (4 - ray.origin.x) / (ray.direction.x != 0 ? ray.direction.x : 0),
-//     (4 - ray.origin.y) / (ray.direction.y != 0 ? ray.direction.y : 0),
-//     (4 - ray.origin.z) / (ray.direction.z != 0 ? ray.direction.z : 0),
-//   )
-//   // console.log(tTo0)
-//   // console.log(tTo4)
+function initiateMarch(ray) {
+  /// set ray to [0,1]² space
+  const ray2 = {
+    direction: ray.direction.clone().normalize(),
+    origin: ray.origin.clone().divideScalar(4)
+  }
+
+  /// get ray signs for each axis
+  dirSigns.set(
+    ray2.direction.x >= 0 ? 1 : 0,
+    ray2.direction.y >= 0 ? 1 : 0,
+    ray2.direction.z >= 0 ? 1 : 0,
+  );
+
+  /// get integer displacements on each axis
+  moves.copy(dirSigns).multiplyScalar(2).sub(new THREE.Vector3(1, 1, 1));
+
+  /// inverse of the direction of the ray to avoid 
+  invDir.set(
+    1 / ray2.direction.x,
+    1 / ray2.direction.y,
+    1 / ray2.direction.z,
+  );
+
   
-//   const tMin = new THREE.Vector3(
-//     Math.max(0, signs.x ? tTo0.x : tTo4.x), 
-//     Math.max(0, signs.y ? tTo0.y : tTo4.y), 
-//     Math.max(0, signs.z ? tTo0.z : tTo4.z) 
-//   );
+  timeSteps.set(
+    1 / ray2.direction.x,
+    1 / ray2.direction.y,
+    1 / ray2.direction.z,
+  );
+  timeSteps.multiply(moves)
 
-//   const tMax = new THREE.Vector3(
-//     Math.min(Number.MAX_VALUE, signs.x ? tTo4.x : tTo0.x), 
-//     Math.min(Number.MAX_VALUE, signs.y ? tTo4.y : tTo0.y), 
-//     Math.min(Number.MAX_VALUE, signs.z ? tTo4.z : tTo0.z) 
-//   );
-//   // console.log(tMin, tMax)
+  Dir.copy(ray2.direction);
 
-//   const entry = Math.max(Math.max(tMin.x, tMin.y), tMin.z);
-//   const exit = Math.min(Math.min(tMax.x, tMax.y), tMax.z);
-//   // console.log(entry, exit)
+  for(let lod = 0; lod < maxLoD; ++lod) {
+    // scaleLoD[lod] = Math.pow(4, lod);
+    // resolutionLoD[lod] = 1 / scaleLoD[lod];
+    resolutionLoD[lod] = 1 / Math.pow(4, lod);
 
-//   const entryPoint = ray.origin.clone().addScaledVector(ray.direction, entry)
-//   const exitPoint = ray.origin.clone().addScaledVector(ray.direction, exit)
-//   // inter0.position.copy(entryPoint);
-//   // inter1.position.copy(exitPoint);
+  }
 
-//   entryPoint.clamp(new THREE.Vector3(0,0,0), new THREE.Vector3(4,4,4))
-//   // console.log(entryPoint)
-//   return {entryPoint, entry, exit}
-// }
+  const {entryPoint, entry, exit} = computeEntryPoint(ray2);
 
-function computeEntryPoint01(ray) {
+  depths.length = 0
+
+  stepThroughCell(new THREE.Vector3(0, 0, 0), ray2, entryPoint, entry, exit, 0, new THREE.Vector3(), entry*4);
+
+  /// debug
+  showLods()
+  inter0.position.copy(ray.origin.clone().addScaledVector(ray.direction, entry*4));
+  inter1.position.copy(ray.origin.clone().addScaledVector(ray.direction, exit*4));
+
+  console.log(depths)
+  ///
+}
+
+function stepThroughCell(cell, ray, entryPoint, entryT, exitT, lod = 0, offset = new THREE.Vector3(), depth = 0) {  
+  if(lod >= 3)
+    return;
+
+  console.log(lod, entryT, cell)
+  console.log(depth)
+  depths.push(depth)
+  LODS[2].push(ray.origin.clone().multiplyScalar(4).addScaledVector(ray.direction, depth))
+
+
+  /// rescaling time from [0,1]² -> [0,4]²
+  const timeToExit = (exitT - entryT) * 4;
+
+  /// offset in [0,1]²
+  const cellOffset = offset.clone().addScaledVector(cell, resolutionLoD[lod]);
+  
+  /// entry point: [0, 1]²
+  /// first point : [0, 4]²
+  const firstPoint = entryPoint.clone().sub(cell).multiplyScalar(4);
+
+  /// DEBUG
+  showCell(cell, lod, cellOffset.clone());
+  // const debugPos = firstPoint.clone().multiplyScalar(resolutionLoD[lod]).addScaledVector(cellOffset, 4);
+  // LODS[lod].push(debugPos)
+  /// 
+
+  const nextBoundary = firstPoint.clone().floor().add(dirSigns);
+  const closestBoundary = nextBoundary.clone().sub(firstPoint).multiply(invDir);
+
+  closestBoundary.x += closestBoundary.x < epsilon ? timeSteps.x : 0;
+  closestBoundary.y += closestBoundary.y < epsilon ? timeSteps.y : 0;
+  closestBoundary.z += closestBoundary.z < epsilon ? timeSteps.z : 0;
+
+
+  const voxel = firstPoint.clone().floor();
+  voxel.clamp(new THREE.Vector3(0,0,0), new THREE.Vector3(3,3,3));
+  let t = 0;
+  let i = 0;
+  const hits = new Array(10);
+  const voxelHits = new Array(10);
+  do {
+    hits[i] = t;
+    voxelHits[i] = voxel.clone();
+    if(closestBoundary.x < closestBoundary.y && closestBoundary.x < closestBoundary.z) {
+      t = closestBoundary.x;
+      closestBoundary.x += timeSteps.x;
+      voxel.x += moves.x;
+    }else if(closestBoundary.y < closestBoundary.z) {
+      t = closestBoundary.y;
+      closestBoundary.y += timeSteps.y;
+      voxel.y += moves.y;
+    }
+    else {
+      t = closestBoundary.z;
+      closestBoundary.z += timeSteps.z;
+      voxel.z += moves.z;
+    }
+
+    ++i
+  } while(t < timeToExit - epsilon && i < 10)
+  hits[i] = timeToExit;
+
+
+
+  for(let j = 0; j < i; ++j) {
+    stepThroughCell(
+      voxelHits[j].clone(),
+      ray,
+      firstPoint.clone().addScaledVector(Dir, hits[j]),
+      hits[j],
+      hits[j+1],
+      lod+1,
+      cellOffset.clone(),
+      depth + hits[j] *resolutionLoD[lod]
+    );
+  }
+}
+
+initiateMarch(ray)
+
+
+
+/// used once to enter first box
+function computeEntryPoint(ray) {
   const direction = ray.direction.clone();
   const origin = ray.origin.clone();
-  const end = origin.clone().add(direction);
-  origin.multiplyScalar(1/4);
-  end.multiplyScalar(1/4);
-  direction.subVectors(end, origin).normalize();
 
 
   const tTo0 = new THREE.Vector3(
@@ -275,15 +322,15 @@ function computeEntryPoint01(ray) {
   )
   
   const tMin = new THREE.Vector3(
-    Math.max(0, signs.x ? tTo0.x : tTo1.x), 
-    Math.max(0, signs.y ? tTo0.y : tTo1.y), 
-    Math.max(0, signs.z ? tTo0.z : tTo1.z) 
+    Math.max(0, dirSigns.x ? tTo0.x : tTo1.x), 
+    Math.max(0, dirSigns.y ? tTo0.y : tTo1.y), 
+    Math.max(0, dirSigns.z ? tTo0.z : tTo1.z) 
   );
 
   const tMax = new THREE.Vector3(
-    Math.min(Number.MAX_VALUE, signs.x ? tTo1.x : tTo0.x), 
-    Math.min(Number.MAX_VALUE, signs.y ? tTo1.y : tTo0.y), 
-    Math.min(Number.MAX_VALUE, signs.z ? tTo1.z : tTo0.z) 
+    Math.min(Number.MAX_VALUE, dirSigns.x ? tTo1.x : tTo0.x), 
+    Math.min(Number.MAX_VALUE, dirSigns.y ? tTo1.y : tTo0.y), 
+    Math.min(Number.MAX_VALUE, dirSigns.z ? tTo1.z : tTo0.z) 
   );
 
   const entry = Math.max(Math.max(tMin.x, tMin.y), tMin.z);
@@ -295,302 +342,6 @@ function computeEntryPoint01(ray) {
   return {entryPoint, entry, exit}
 }
 
-
-const sphereGeometry3 = new THREE.SphereGeometry( 0.025, 16, 16 );
-const sphereMaterial3 = new THREE.MeshPhongMaterial( { color: 0xAA4422, wireframe: true } );
-let step1 = new THREE.Mesh(sphereGeometry3, sphereMaterial3)
-let steps = [];
-for(let i = 0; i < 10; ++i) {
-  steps.push(new THREE.Mesh(sphereGeometry3, sphereMaterial3))
-  scene.add(steps[i])
-}
-
-const epsilon = 0.000001;
-// function stepThrough(ray, entryPoint, minT, maxT) {
-//   const nextBoundary = entryPoint.clone().floor().add(signs);
-//   // nextBoundary.clamp(new THREE.Vector3(0, 0, 0), new THREE.Vector3(3, 3, 3))
-
-//   // console.log(entryPoint);
-//   // console.log(stepVector);
-//   // console.log(nextBoundary);
-//   // console.log(ray.direction);
-//   // console.log(maxT)
-
-//   // const firstBoundary = new THREE.Vector3(
-
-//   // );
-
-//   const inDirection = (new THREE.Vector3(1, 1, 1)).divide(ray.direction);
-//   // console.log(inDirection)
-//   const closestBoundary = nextBoundary.clone().sub(entryPoint).multiply(inDirection);
-//   // const closestBoundary = nextBoundary.clone().sub(entryPoint).divide(ray.direction);
-//   closestBoundary.x += closestBoundary.x < epsilon ? stepVector.x : 0;
-//   closestBoundary.y += closestBoundary.y < epsilon ? stepVector.y : 0;
-//   closestBoundary.z += closestBoundary.z < epsilon ? stepVector.z : 0;
-//   // console.log(closestBoundary);
-
-//   const hits = [];
-//   const voxelHits = [];
-//   const firstVoxel = entryPoint.clone().floor()
-//   // console.log(firstVoxel);
-//   firstVoxel.clamp(new THREE.Vector3(0,0,0), new THREE.Vector3(3,3,3))
-//   voxelHits.push(firstVoxel.clone())
-
-
-
-//   let t = 0;
-//   // console.log(t+minT)
-//   let i = 0;
-//   do {
-//     if(closestBoundary.x < closestBoundary.y && closestBoundary.x < closestBoundary.z) {
-//       // console.log("x", closestBoundary.x, stepVector.x)
-//       t = closestBoundary.x;
-//       closestBoundary.x += stepVector.x;
-//       hits.push(t)
-//       voxelHits.push(firstVoxel.add(new THREE.Vector3(-1 + 2 * signs.x, 0, 0)).clone());
-//     } else if(closestBoundary.y < closestBoundary.z) {
-//       // console.log("y", closestBoundary.y, stepVector.y)
-//       t = closestBoundary.y;
-//       closestBoundary.y += stepVector.y;
-//       hits.push(t)
-//       voxelHits.push(firstVoxel.add(new THREE.Vector3(0, -1 + 2 * signs.y, 0)).clone());
-//     }
-//     else {
-//       // console.log("z")
-//       t = closestBoundary.z;
-//       closestBoundary.z += stepVector.z;
-//       hits.push(t)
-//       voxelHits.push(firstVoxel.add(new THREE.Vector3(0, 0, -1 + 2 * signs.z)).clone());
-//     }
-//     // console.log(t+minT);
-//     if(t + minT < maxT - epsilon) steps[i++].position.copy(ray.origin).addScaledVector(ray.direction, t + minT)
-  
-//       // console.log(steps[i].position)
-//       // showCell(steps[i].position.clone().floor(), 1)
-//     // ++i;
-//   } while(t + minT < maxT - epsilon)
-  
-//   // console.log(voxelHits)
-//   voxelHits.pop()
-//   // voxelHits.forEach(voxel => showCell(voxel, 1))
-
-//   while(i < 10) {
-//     steps[i++].position.set(Infinity,Infinity,Infinity)
-
-//   }
-
-
-
-// }
-
-// const maxLoD = 4;
-
-const dirSigns = new THREE.Vector3()
-const scaledDirs = new Array(maxLoD);
-const invDir = new Array(maxLoD);
-const timeSteps = new Array(maxLoD);
-const resolutionLoD = new Array(maxLoD);
-const scaleLoD = new Array(maxLoD);
-const moves = new THREE.Vector3();
-
-
-function initiateMarch(ray) {
-  console.log("start march")
-  const ray2 = {
-    direction: ray.direction.clone().divideScalar(4),
-    origin: ray.origin.clone().divideScalar(4)
-  }
-
-  dirSigns.set(
-    ray.direction.x >= 0 ? 1 : 0,
-    ray.direction.y >= 0 ? 1 : 0,
-    ray.direction.z >= 0 ? 1 : 0,
-  );
-
-  moves.copy(dirSigns).multiplyScalar(2).sub(new THREE.Vector3(1, 1, 1));
-
-  invDir[0] = new THREE.Vector3(
-    1 / ray.direction.x,
-    1 / ray.direction.y,
-    1 / ray.direction.z,
-  );
-
-  timeSteps[0] = new THREE.Vector3(
-    1 / ray.direction.x,
-    1 / ray.direction.y,
-    1 / ray.direction.z,
-  );
-
-  scaledDirs[0] = ray.direction.clone();
-
-  timeSteps[0].multiply(moves)
-  // console.log(invDir, timeSteps, dirSigns, moves)
-  for(let lod = 0; lod < maxLoD; ++lod) {
-    scaleLoD[lod] = Math.pow(4, lod + 1);
-    resolutionLoD[lod] = 1 / scaleLoD[lod];
-    scaledDirs[lod] = ray.direction.clone().multiplyScalar(resolutionLoD[lod]);
-  }
-  console.log(resolutionLoD, scaleLoD, scaledDirs)
-  console.log(new THREE.Vector3(3, 3, 0).multiplyScalar(resolutionLoD[2]))
-
-  const {entryPoint, entry, exit} = computeEntryPoint01(ray);
-  console.log(entryPoint.clone().multiplyScalar(4), entry, exit)
-
-  /// debug
-  inter0.position.copy(ray.origin.clone().addScaledVector(ray.direction, entry*4));
-  inter1.position.copy(ray.origin.clone().addScaledVector(ray.direction, exit*4));
-  // entryPoint
-  ///
-
-  stepThroughCell(new THREE.Vector3(0, 0, 0), ray2, entryPoint, entry, exit, 0);
-
-
-  // showCell(new THREE.Vector3(1, 2, 0), 1, new THREE.Vector3(0.25, 0.5, 0))
-  // showCell(new THREE.Vector3(3, 2, 0), 2, new THREE.Vector3(7/16, 10/16, 0))
-  // showCell(new THREE.Vector3(3, 3, 0), 3, new THREE.Vector3(1/4 + 3/16 + 3/64, 2/4 + 2/16 + 3/64))
-}
-
-
-const sphereGeometry4 = new THREE.SphereGeometry( 0.045, 8, 8 );
-const sphereGeometry5 = new THREE.SphereGeometry( 0.035, 8, 8 );
-const sphereGeometry6 = new THREE.SphereGeometry( 0.015, 8, 8 );
-const sphereMaterial4 = new THREE.MeshPhongMaterial( { color: 0x44AA22, wireframe: true } );
-const sphereMaterial5 = new THREE.MeshPhongMaterial( { color: 0x2244AA, wireframe: true } );
-const sphereMaterial6 = new THREE.MeshPhongMaterial( { color: 0xAA4422, wireframe: true } );
-let steps2 = [];
-let steps3 = [];
-let steps4 = [];
-for(let i = 0; i < 10; ++i) {
-  steps2.push(new THREE.Mesh(sphereGeometry4, sphereMaterial4))
-  scene.add(steps2[i])
-  steps3.push(new THREE.Mesh(sphereGeometry5, sphereMaterial5))
-  scene.add(steps3[i])
-  steps4.push(new THREE.Mesh(sphereGeometry6, sphereMaterial6))
-  scene.add(steps4[i])
-}
-
-// function stepThroughGrid(cell, entryPoint, entryT)
-
-function stepThroughCell(cell, ray, entryPoint, entryT, exitT, lod = 0, offset = new THREE.Vector3(), first = true) {  
-  if(lod == 4)
-    return;
-  // console.log(cell, lod, offset)
-  const timeToExit = (exitT - entryT) * 4;
-  // const cellOffset = offset.clone().add(cell);
-  const cellOffset = offset.clone().addScaledVector(cell, resolutionLoD[lod]*4);
-  showCell(cell, lod, cellOffset.clone());
-
-  /// entry point: [0, 1]²
-  console.log("entry", lod, entryPoint)
-  console.log("cell", cell)
-  /// first point : [0, 4]²
-  const firstPoint = entryPoint.clone().sub(cell).multiplyScalar(4);
-  // firstPoint.sub(cell);
-  console.log("first", firstPoint)
-  // firstPoint
-  
-  const nextBoundary = firstPoint.clone().floor().add(dirSigns);
-  const closestBoundary = nextBoundary.clone().sub(firstPoint).multiply(invDir[0]);
-
-  closestBoundary.x += closestBoundary.x < epsilon ? timeSteps[0].x : 0;
-  closestBoundary.y += closestBoundary.y < epsilon ? timeSteps[0].y : 0;
-  closestBoundary.z += closestBoundary.z < epsilon ? timeSteps[0].z : 0;
-
-  // console.log(nextBoundary, closestBoundary);
-
-  const voxel = firstPoint.clone().floor();
-  voxel.clamp(new THREE.Vector3(0,0,0), new THREE.Vector3(3,3,3));
-  // console.log(voxel)
-  let t = 0;
-  let i = 0;
-  const hits = new Array(10);
-  const voxelHits = new Array(10);
-  do {
-    hits[i] = t;
-    voxelHits[i] = voxel.clone();
-    if(closestBoundary.x < closestBoundary.y && closestBoundary.x < closestBoundary.z) {
-      t = closestBoundary.x;
-      closestBoundary.x += stepVector.x;
-      voxel.x += moves.x;
-    }else if(closestBoundary.y < closestBoundary.z) {
-      t = closestBoundary.y;
-      closestBoundary.y += stepVector.y;
-      voxel.y += moves.y;
-    }
-    else {
-      t = closestBoundary.z;
-      closestBoundary.z += stepVector.z;
-      voxel.z += moves.z;
-    }
-
-    ++i
-  } while(t < timeToExit - epsilon && i < 10)
-  hits[i] = timeToExit;
-    // console.log(i)
-  // console.table( hits)
-  // console.table( voxelHits)
-
-
-
-  // for(let j = 0; j < i; ++j) {
-  for(let j = 0; j < i; ++j) {
-    stepThroughCell(
-      voxelHits[j].clone(),
-      ray,
-      firstPoint.clone().addScaledVector(scaledDirs[lod], hits[j]*4),
-      hits[j],
-      hits[j+1],
-      lod+1,
-      cellOffset.clone(),
-      j == 0
-    );
-  }
-
-  ///debug
-  for(let j = 0; j < i; ++j) {
-    if(lod == 2) {
-      const pos = firstPoint.clone().multiplyScalar(resolutionLoD[lod]*4).addScaledVector(cellOffset, 4);
-      pos.addScaledVector(scaledDirs[lod], hits[j] *4)//.multiplyScalar(0.25)
-      steps4[j].position.copy(pos)
-    } else if(lod == 1) {
-      const pos = firstPoint.clone().multiplyScalar(resolutionLoD[lod]*4).addScaledVector(cellOffset, 4);
-      pos.addScaledVector(scaledDirs[lod], hits[j]*4)//.multiplyScalar(0.25)
-      steps3[j].position.copy(pos)
-      // steps3[j].position.copy(firstPoint).addScaledVector(scaledDirs[lod], hits[j]);
-      
-    } else {
-      steps2[j].position.copy(firstPoint).addScaledVector(scaledDirs[lod], hits[j] * 4 );
-      // showCell(voxelHits[j], lod + 1, offset);
-    }
-    // showCell(voxelHits[j], lod + 1, cellOffset.clone());
-    // showCell(voxelHits[j], lod + 1, offset.clone().addScaledVector(cell, resolutionLoD[lod]));
-  }
-  while(i < 10) {
-    // steps2[i++].position.set(Infinity,Infinity,Infinity)
-    if(lod == 2) {
-      steps4[i++].position.set(Infinity,Infinity,Infinity)
-    } else if(lod == 1) {
-      steps3[i++].position.set(Infinity,Infinity,Infinity)
-    } else {
-      steps2[i++].position.set(Infinity,Infinity,Infinity)
-    } 
-  }
-  ///
-}
-
-initiateMarch(ray)
-
-// showCell(new THREE.Vector3(1,2,0), 2, new THREE.Vector3(2, 2, 0))
-
-
-
-// function compute(){
-//   const {entryPoint, entry, exit} = computeEntryPoint(ray);
-
-//   stepThrough(ray, entryPoint, entry, exit);
-// }
-
-// compute()
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2( 1, 1 );
@@ -611,11 +362,9 @@ function onPointerDown(event) {
   }
 
   if(selectedPoint != -1){
-    // orbitControls.enableRotate = false;
     document.addEventListener( 'pointerup', onPointerUp );
     document.removeEventListener( 'pointerdown', onPointerDown );
     document.addEventListener( 'pointermove', onPointerMove );
-    console.log(`selected point ${selectedPoint}`);
   }
 }
 
@@ -626,20 +375,12 @@ function onPointerMove(event) {
   point.z = 0;
   spheres[selectedPoint].position.copy(point);
   updateRay(selectedPoint, point);
-  setStepVector();
-
-  // compute()
-  // const {entryPoint, entry, exit} = computeEntryPoint(ray);
-
-  // stepThrough(ray, entryPoint, entry, exit);
 
   initiateMarch(ray);
 
 }
 
 function onPointerUp(event) {
-    // orbitControls.enableRotate = true;
-    console.log(`deselected point ${selectedPoint}`);
   selectedPoint = -1;
   document.removeEventListener( 'pointermove', onPointerMove );
   document.addEventListener( 'pointerdown', onPointerDown );
